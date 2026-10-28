@@ -1,0 +1,353 @@
+// نظام إدارة الخدمات الميدانية — الجوبي
+// الوقت يُخزَّن UTC دائمًا؛ العرض بمنطقة APP_TZ (Asia/Aden).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN // المدير العام
+  SERVICE_MANAGER // مدير الخدمات
+  SUPERVISOR // المشرف
+  BRANCH // موظف/مدير فرع
+  INSTALLER // معلم أثاث
+  CARPET_LAYER // مفروش موكيت
+  DRIVER // سائق
+}
+
+enum ServiceType {
+  FURNITURE
+  CARPET
+  DELIVERY
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum OrderStatus {
+  NEW
+  APPROVED
+  SCHEDULED
+  IN_PROGRESS
+  ON_HOLD
+  ISSUE_REPORTED
+  COMPLETED
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  ISSUE
+  COMPLETED
+  REASSIGNED // أُغلق بإعادة الإسناد — يبقى للتاريخ
+  CANCELLED
+}
+
+enum TripStatus {
+  ASSIGNED
+  LOADED
+  DEPARTED
+  ARRIVED
+  DELIVERED
+}
+
+enum FileKind {
+  BEFORE
+  AFTER
+  DELIVERY
+  SIGNATURE
+}
+
+enum ComplaintStatus {
+  NEW
+  IN_PROGRESS
+  CONTACTED
+  RESOLVED
+  CLOSED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  phone        String   @unique
+  passwordHash String
+  role         Role
+  branchId     String?
+  branch       Branch?  @relation(fields: [branchId], references: [id])
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions    Session[]
+  memberships TeamMember[]
+  supervises  Team[]           @relation("TeamSupervisor")
+  assignments TaskAssignment[] @relation("Assignee")
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// الفروع مصدرها الموقع (aj-platform: /wp-json/aj/v1/branches) — لا تُدار هنا.
+model Branch {
+  id        String   @id @default(uuid())
+  wpId      Int?     @unique
+  name      String
+  city      String   @default("")
+  address   String   @default("")
+  isActive  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  users      User[]
+  orders     ServiceOrder[]
+  complaints Complaint[]
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String   @unique // مُطبَّع بصيغة دولية (967…)
+  createdAt DateTime @default(now())
+
+  orders     ServiceOrder[]
+  complaints Complaint[]
+}
+
+model ServiceOrder {
+  id             String      @id @default(uuid())
+  number         Int         @unique @default(autoincrement())
+  branchId       String
+  branch         Branch      @relation(fields: [branchId], references: [id])
+  customerId     String
+  customer       Customer    @relation(fields: [customerId], references: [id])
+  invoiceNumber  String
+  serviceType    ServiceType
+  priority       Priority    @default(NORMAL)
+  requestedDate  DateTime // التاريخ الذي يطلبه العميل
+  scheduledStart DateTime?
+  scheduledEnd   DateTime?
+  address        String
+  mapUrl         String?
+  itemsCount     Int? // عدد القطع (أثاث)
+  details        String      @default("")
+  status         OrderStatus @default(NEW)
+  completedAt    DateTime?
+  createdById    String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  // تقييم العميل: الرابط يُحفظ كبصمة فقط
+  reviewTokenHash    String?   @unique
+  reviewTokenExpires DateTime?
+
+  assignments TaskAssignment[]
+  trip        DeliveryTrip?
+  carpet      CarpetWorkOrder?
+  complaints  Complaint[]
+  review      CustomerReview?
+  costs       WorkCost[]
+
+  @@index([branchId, status])
+  @@index([status, scheduledStart])
+  @@index([branchId, invoiceNumber])
+}
+
+model Team {
+  id           String      @id @default(uuid())
+  name         String
+  type         ServiceType
+  zone         String      @default("")
+  capacity     Int         @default(1) // عدد المهام المتزامنة المسموحة
+  isActive     Boolean     @default(true)
+  supervisorId String?
+  supervisor   User?       @relation("TeamSupervisor", fields: [supervisorId], references: [id])
+  createdAt    DateTime    @default(now())
+
+  members     TeamMember[]
+  assignments TaskAssignment[]
+
+  @@index([supervisorId])
+}
+
+model TeamMember {
+  teamId   String
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id])
+  joinedAt DateTime @default(now())
+
+  @@id([teamId, userId])
+  @@index([userId])
+}
+
+// تكليف: فريق أو موظف واحد (سائق). إعادة الإسناد تُغلق القديم وتُنشئ جديدًا.
+model TaskAssignment {
+  id             String           @id @default(uuid())
+  orderId        String
+  order          ServiceOrder     @relation(fields: [orderId], references: [id])
+  teamId         String?
+  team           Team?            @relation(fields: [teamId], references: [id])
+  assigneeId     String?
+  assignee       User?            @relation("Assignee", fields: [assigneeId], references: [id])
+  assignedById   String
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  status         AssignmentStatus @default(ASSIGNED)
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime         @default(now())
+
+  events TaskEvent[]
+  files  TaskFile[]
+  pings  LocationPing[]
+
+  @@index([orderId])
+  @@index([teamId, status, scheduledStart])
+  @@index([assigneeId, status, scheduledStart])
+}
+
+model TaskEvent {
+  id           String         @id @default(uuid())
+  assignmentId String
+  assignment   TaskAssignment @relation(fields: [assignmentId], references: [id])
+  type         String // ASSIGNED, STARTED, NOTE, ISSUE, PHOTO, SIGNATURE, TRIP_LOADED…, COMPLETED, REASSIGNED
+  actorId      String
+  note         String?
+  at           DateTime       @default(now())
+
+  @@index([assignmentId, at])
+}
+
+// الصور والتوقيع في جدول واحد — الفرق هو kind فقط.
+model TaskFile {
+  id           String         @id @default(uuid())
+  assignmentId String
+  assignment   TaskAssignment @relation(fields: [assignmentId], references: [id])
+  kind         FileKind
+  storageKey   String
+  mime         String
+  signerName   String?
+  uploadedById String
+  createdAt    DateTime       @default(now())
+
+  @@index([assignmentId, kind])
+}
+
+model DeliveryTrip {
+  id            String       @id @default(uuid())
+  orderId       String       @unique
+  order         ServiceOrder @relation(fields: [orderId], references: [id])
+  pickupAddress String
+  status        TripStatus   @default(ASSIGNED)
+  loadedAt      DateTime?
+  departedAt    DateTime?
+  arrivedAt     DateTime?
+  deliveredAt   DateTime?
+}
+
+model CarpetWorkOrder {
+  id               String       @id @default(uuid())
+  orderId          String       @unique
+  order            ServiceOrder @relation(fields: [orderId], references: [id])
+  carpetType       String
+  areaSqm          Decimal      @db.Decimal(10, 2)
+  workersCount     Int?
+  quantityReceived Decimal?     @db.Decimal(10, 2) // م²
+  quantityUsed     Decimal?     @db.Decimal(10, 2) // م² — الهدر = المستلم − المستخدم
+  qualityNotes     String?
+}
+
+model Complaint {
+  id           String          @id @default(uuid())
+  ticketNumber Int             @unique @default(autoincrement())
+  orderId      String
+  order        ServiceOrder    @relation(fields: [orderId], references: [id])
+  customerId   String
+  customer     Customer        @relation(fields: [customerId], references: [id])
+  branchId     String
+  branch       Branch          @relation(fields: [branchId], references: [id])
+  assignedToId String?
+  status       ComplaintStatus @default(NEW)
+  description  String
+  openedAt     DateTime        @default(now())
+  resolvedAt   DateTime?
+  closedAt     DateTime?
+
+  @@index([branchId, status])
+  @@index([status])
+}
+
+model CustomerReview {
+  id             String       @id @default(uuid())
+  orderId        String       @unique // تقييم واحد لكل طلب
+  order          ServiceOrder @relation(fields: [orderId], references: [id])
+  stars          Int
+  punctuality    Int
+  serviceQuality Int
+  notes          String?
+  submittedAt    DateTime     @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  entityType String
+  entityId   String
+  action     String
+  data       Json?
+  at         DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+enum CostCategory {
+  FUEL
+  MAINTENANCE
+  OVERTIME
+  OTHER
+}
+
+// التكاليف بوحدات صغرى صحيحة (لا float للأموال). العملة في COST_CURRENCY.
+model WorkCost {
+  id          String        @id @default(uuid())
+  orderId     String?
+  order       ServiceOrder? @relation(fields: [orderId], references: [id])
+  category    CostCategory
+  amountMinor Int
+  note        String?
+  occurredAt  DateTime
+  createdById String
+  createdAt   DateTime      @default(now())
+
+  @@index([occurredAt])
+  @@index([orderId])
+}
+
+// موقع يشاركه الموظف بضغطة منه أثناء مهمة قيد التنفيذ فقط. يُحذف بعد LOCATION_RETENTION_DAYS.
+model LocationPing {
+  id           String         @id @default(uuid())
+  userId       String
+  assignmentId String
+  assignment   TaskAssignment @relation(fields: [assignmentId], references: [id])
+  lat          Float
+  lng          Float
+  capturedAt   DateTime       @default(now())
+
+  @@index([assignmentId, capturedAt])
+  @@index([capturedAt])
+}

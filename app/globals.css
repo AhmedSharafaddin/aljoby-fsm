@@ -1,0 +1,34 @@
+@import 'tailwindcss';
+
+/* هوية الجوبي — نفس ألوان aj-platform/aj-identity.php وتطبيق الجوال (src/ui/theme/tokens.ts). */
+@theme {
+  --color-brand: #316a21;
+  --color-brand-soft: #4a8238;
+  --color-brand-shade: #1e4214;
+  --color-ivory: #f6f3ed;
+  --color-muted: #ede9e1;
+  --color-ink: #1e1a17;
+  --color-ink-muted: #655f56;
+  --color-gold: #a87e4b;
+  --color-danger: #b42318;
+  --color-warn: #b54708;
+  --font-sans: var(--font-plex), system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-ivory);
+  color: var(--color-ink);
+}
+
+@layer components {
+  .card { @apply rounded-xl bg-white p-4 shadow-sm ring-1 ring-black/5; }
+  .btn { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 font-semibold text-white hover:bg-brand-shade disabled:opacity-50; }
+  .btn-outline { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2 font-semibold text-brand ring-1 ring-brand hover:bg-brand/5 disabled:opacity-50; }
+  .btn-danger { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2 font-semibold text-danger ring-1 ring-danger hover:bg-danger/5 disabled:opacity-50; }
+  .input { @apply min-h-11 w-full rounded-lg border border-black/15 bg-white px-3 py-2 focus:border-brand focus:outline-2 focus:outline-brand/30; }
+  .label { @apply mb-1 block text-sm font-semibold text-ink-muted; }
+  .table { @apply w-full text-sm; }
+  .table th { @apply border-b border-black/10 p-2 text-start font-semibold text-ink-muted; }
+  .table td { @apply border-b border-black/5 p-2 align-top; }
+  .link { @apply font-semibold text-brand underline-offset-4 hover:underline; }
+}

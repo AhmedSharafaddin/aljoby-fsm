@@ -1,0 +1,12 @@
+# قاعدة البيانات للتطوير. بديل بلا Docker: npm run db:local
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: fsm
+      POSTGRES_PASSWORD: fsm
+      POSTGRES_DB: fsm
+    ports: ['5432:5432']
+    volumes: ['pgdata:/var/lib/postgresql/data', './scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init.sql:ro']
+volumes:
+  pgdata:

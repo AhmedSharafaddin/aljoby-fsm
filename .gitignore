@@ -1,0 +1,12 @@
+node_modules
+.next
+.env
+storage
+.test-storage
+.pgdata
+*.tsbuildinfo
+next-env.d.ts
+.pgdata-test
+.env.*
+!.env.example
+*.log
