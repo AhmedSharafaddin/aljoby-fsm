@@ -8,6 +8,18 @@ import { canMoveOrder, carpetWaste, complaintMoveAllowed, completionMissing, isL
 
 const at = (s: string) => new Date(s);
 
+// صور سليمة أصغر ما يمكن (1×1) لاختبار فحص الصور
+const PNG_1X1 = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+const JPEG_1X1 = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xd9]);
+const WEBP_1X1 = new Uint8Array([...'RIFF'].map((c) => c.charCodeAt(0)).concat([18, 0, 0, 0], [...'WEBPVP8L'].map((c) => c.charCodeAt(0)), [5, 0, 0, 0, 0x2f, 0, 0, 0, 0, 0]));
+/** PNG سليم بعد تغيير العرض والارتفاع في ترويسة IHDR. */
+function withPngSize(w: number, h: number) {
+  const b = PNG_1X1.slice();
+  new DataView(b.buffer).setUint32(16, w);
+  new DataView(b.buffer).setUint32(20, h);
+  return b;
+}
+
 describe('حالات الطلب', () => {
   it('يسمح بالمسار الأساسي ويمنع القفز', () => {
     expect(canMoveOrder('NEW', 'APPROVED')).toBe(true);
@@ -159,8 +171,19 @@ describe('أدوات', () => {
     expect(rateLimitSize()).toBeLessThan(10);
   });
   it('فحص نوع الصورة من البايتات', () => {
-    expect(sniffImage(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0]))?.mime).toBe('image/png');
-    expect(sniffImage(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))?.mime).toBe('image/jpeg');
+    expect(sniffImage(PNG_1X1)?.mime).toBe('image/png');
+    expect(sniffImage(JPEG_1X1)?.mime).toBe('image/jpeg');
+    expect(sniffImage(WEBP_1X1)?.mime).toBe('image/webp');
     expect(sniffImage(new TextEncoder().encode('<svg onload=alert(1)>'))).toBeNull();
+  });
+  it('يرفض الصور التالفة أو المبتورة حتى لو كانت ترويستها صحيحة', () => {
+    // الحالة التي كانت تُقبل: 12 بايت بترويسة PNG فقط
+    expect(sniffImage(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]))).toBeNull();
+    expect(sniffImage(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBeNull();
+    expect(sniffImage(PNG_1X1.slice(0, PNG_1X1.length - 12))).toBeNull(); // رفع انقطع قبل IEND
+    expect(sniffImage(JPEG_1X1.slice(0, JPEG_1X1.length - 2))).toBeNull(); // بلا علامة النهاية
+    expect(sniffImage(WEBP_1X1.slice(0, WEBP_1X1.length - 2))).toBeNull(); // حجم RIFF لا يطابق الملف
+    expect(sniffImage(withPngSize(0, 1))).toBeNull(); // عرض صفر
+    expect(sniffImage(withPngSize(100_000, 100_000))).toBeNull(); // أبعاد مبالغ فيها (قنبلة فك ضغط عند من يعرضها)
   });
 });

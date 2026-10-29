@@ -14,7 +14,7 @@ import { costsReport, createCost, dashboardSummary, employeesReport } from '@/mo
 import { createComplaint, createUser, listComplaints, reviewTarget, setTeamMember, submitReview, syncBranches, updateComplaint, updateUser } from '@/modules/service';
 import { advanceTrip, completeTask, getTask, listMyTasks, purgeOldLocations, readFileFor, reportIssue, shareLocation, startTask, updateCarpet, uploadFile } from '@/modules/tasks';
 
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+const PNG = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')); // PNG سليم 1×1
 const photo = (kind: string, signerName?: string) => {
   const fd = new FormData();
   fd.set('kind', kind);
@@ -129,6 +129,15 @@ describe('التدفق الكامل لطلب تركيب أثاث', () => {
     bad.set('kind', 'AFTER');
     bad.set('file', new File(['<svg/>'], 'x.png', { type: 'image/png' }));
     expect(await status(uploadFile(A.inst1, taskId, bad))).toBe(415);
+    // ترويسة PNG وحدها (12 بايت) أو صورة مبتورة لم تعد تُقبل دليلًا، ولا يُسجَّل لها ملف ولا حدث
+    const before = await db.taskFile.count({ where: { assignmentId: taskId } });
+    for (const bytes of [PNG.slice(0, 12), PNG.slice(0, PNG.length - 12)]) {
+      const stub = new FormData();
+      stub.set('kind', 'AFTER');
+      stub.set('file', new File([bytes], 'x.png', { type: 'image/png' }));
+      expect(await status(uploadFile(A.inst1, taskId, stub))).toBe(415);
+    }
+    expect(await db.taskFile.count({ where: { assignmentId: taskId } })).toBe(before);
     expect(await status(uploadFile(A.inst1, taskId, photo('SIGNATURE')))).toBe(422); // بلا اسم المستلم
 
     await uploadFile(A.inst1, taskId, photo('BEFORE'));
