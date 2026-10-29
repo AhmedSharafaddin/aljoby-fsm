@@ -1,5 +1,6 @@
 // البنية المشتركة: قاعدة البيانات، الأخطاء، الوقت، الهاتف، التدقيق.
 import { Prisma, PrismaClient } from '@prisma/client';
+import { ZodError } from 'zod';
 
 const g = globalThis as unknown as { prisma?: PrismaClient };
 export const db = g.prisma ?? new PrismaClient();
@@ -16,6 +17,12 @@ export class AppError extends Error {
 export const notFound = () => new AppError(404, 'غير موجود أو لا تملك صلاحية الوصول إليه');
 export const forbidden = () => new AppError(403, 'لا تملك صلاحية تنفيذ هذا الإجراء');
 export const conflict = (m: string) => new AppError(409, m);
+
+/** للصفحات: «غير موجود» (404 أو معرّف مشوّه) يصير null، وأي خطأ آخر (قاعدة بيانات…) يُرفع ولا يُخفى. */
+export function nullIfNotFound(e: unknown): null {
+  if ((e instanceof AppError && e.status === 404) || e instanceof ZodError) return null;
+  throw e;
+}
 
 // ---- الوقت: يُخزَّن UTC، والأيام تُحسب بمنطقة الشركة ----
 export const APP_TZ = process.env.APP_TZ || 'Asia/Aden';

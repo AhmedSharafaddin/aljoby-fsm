@@ -165,6 +165,8 @@ model ServiceOrder {
   @@index([branchId, status])
   @@index([status, scheduledStart])
   @@index([branchId, invoiceNumber])
+  @@index([createdAt])
+  @@index([completedAt])
 }
 
 model Team {

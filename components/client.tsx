@@ -10,6 +10,7 @@ async function call(url: string, method: string, body?: unknown | FormData) {
     body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({}));
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- إعادة تحميل كاملة متعمّدة: تصفّر حالة الجلسة والذاكرة المؤقتة
   if (res.status === 401) window.location.href = '/login';
   if (!res.ok) throw new Error(json.error ?? 'تعذّر تنفيذ الطلب، تحقق من الاتصال');
   return json.data;
@@ -129,6 +130,7 @@ export function LoginForm() {
         setError(undefined);
         try {
           await call('/api/v1/auth/login', 'POST', formToJson(e.currentTarget));
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- إعادة تحميل كاملة متعمّدة: تصفّر حالة الجلسة والذاكرة المؤقتة
           window.location.href = '/';
         } catch (err) {
           setError((err as Error).message);
@@ -156,6 +158,7 @@ export function LogoutButton() {
       className="-my-3 py-3 text-sm font-semibold underline-offset-4 hover:underline" // مساحة لمس 44px بنفس الشكل
       onClick={async () => {
         await fetch('/api/v1/auth/logout', { method: 'POST' });
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- إعادة تحميل كاملة متعمّدة: تصفّر حالة الجلسة والذاكرة المؤقتة
         window.location.href = '/login';
       }}
     >

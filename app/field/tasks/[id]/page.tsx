@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { ApiButton, ApiForm, PhotoUpload, ShareLocation, SignaturePad } from '@/components/client';
 import { Badge } from '@/components/ui';
-import { fmtDateTime } from '@/lib/core';
+import { fmtDateTime, nullIfNotFound } from '@/lib/core';
 import { ar } from '@/lib/labels';
 import { requirePage } from '@/lib/session';
 import { completionMissing, isActiveAssignment, nextTripStep } from '@/modules/rules';
@@ -11,7 +11,7 @@ export const metadata = { title: 'تفاصيل المهمة' };
 
 export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   const actor = await requirePage('field.work');
-  const t = await getTask(actor, (await params).id).catch(() => null);
+  const t = await getTask(actor, (await params).id).catch(nullIfNotFound);
   if (!t) return <p className="card text-center">المهمة غير موجودة أو ليست مسندة إليك. <Link className="link" href="/field">مهامي</Link></p>;
 
   const o = t.order;

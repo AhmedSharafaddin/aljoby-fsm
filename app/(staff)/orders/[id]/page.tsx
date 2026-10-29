@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { ApiButton, ApiForm, ReviewLinkButton } from '@/components/client';
 import { Badge, Title } from '@/components/ui';
-import { db, fmtDateTime, proposedStart, toLocalInput } from '@/lib/core';
+import { db, fmtDateTime, nullIfNotFound, proposedStart, toLocalInput } from '@/lib/core';
 import { ar } from '@/lib/labels';
 import { can } from '@/lib/permissions';
 import { requirePage } from '@/lib/session';
@@ -12,7 +12,7 @@ export const metadata = { title: 'تفاصيل الطلب' };
 
 export default async function OrderPage({ params }: { params: Promise<{ id: string }> }) {
   const actor = await requirePage();
-  const o = await getOrder(actor, (await params).id).catch(() => null);
+  const o = await getOrder(actor, (await params).id).catch(nullIfNotFound);
   if (!o) {
     return <p className="card text-center">الطلب غير موجود أو لا تملك صلاحية عرضه. <Link className="link" href="/orders">العودة للطلبات</Link></p>;
   }

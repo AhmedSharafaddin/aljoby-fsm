@@ -6,7 +6,7 @@ import { GET as listOrdersRoute, POST as createOrderRoute } from '@/app/api/v1/o
 import { POST as loginRoute } from '@/app/api/v1/auth/login/route';
 import { GET as teamsRoute } from '@/app/api/v1/teams/route';
 import { createSession, hashPassword, login, type Actor } from '@/lib/auth';
-import { AppError, db, localDate, parseLocal, toLocalInput } from '@/lib/core';
+import { AppError, db, localDate, nullIfNotFound, parseLocal, toLocalInput } from '@/lib/core';
 import { approveOrder, assignmentCandidates, assignOrder, createOrder, createReviewLink, getOrder, listOrders, reassign, setOrderState } from '@/modules/orders';
 import { costsReport, createCost, dashboardSummary, employeesReport } from '@/modules/reports';
 import { createComplaint, createUser, listComplaints, reviewTarget, setTeamMember, submitReview, syncBranches, updateComplaint, updateUser } from '@/modules/service';
@@ -480,5 +480,22 @@ describe('لوحة المؤشرات: المعلّق ليس متأخرًا', () =
     expect((await dashboardSummary(A.manager)).late).toBe(before);
     await db.serviceOrder.update({ where: { id: o.id }, data: { status: 'SCHEDULED' } });
     expect((await dashboardSummary(A.manager)).late).toBe(before + 1); // نفس الطلب مجدولًا يُعد متأخرًا
+  });
+});
+
+describe('المؤجَّل المنفَّذ', () => {
+  it('فهرسا createdAt (قائمة الطلبات) وcompletedAt (لوحة المؤشرات) موجودان', async () => {
+    const rows = await db.$queryRaw<{ indexname: string }[]>`SELECT indexname FROM pg_indexes WHERE tablename = 'ServiceOrder'`;
+    const names = rows.map((r) => r.indexname);
+    expect(names).toContain('ServiceOrder_createdAt_idx');
+    expect(names).toContain('ServiceOrder_completedAt_idx');
+  });
+
+  it('الصفحات: «غير موجود» (404 أو معرّف مشوّه) يصير null، وأي خطأ آخر يُرفع ولا يُبتلع', async () => {
+    expect(nullIfNotFound(new AppError(404, 'x'))).toBeNull();
+    const bad = await getOrder(A.manager, 'not-a-uuid').catch(nullIfNotFound);
+    expect(bad).toBeNull();
+    expect(() => nullIfNotFound(new AppError(409, 'قاعدة البيانات متوقفة'))).toThrow('قاعدة البيانات متوقفة');
+    expect(() => nullIfNotFound(new Error('connection refused'))).toThrow('connection refused');
   });
 });
