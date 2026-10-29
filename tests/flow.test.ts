@@ -670,3 +670,35 @@ describe('الأساس الإنتاجي: الصحة والاحتفاظ بالم�
     expect(res.headers.get('x-request-id')).toBe('req-77');
   });
 });
+
+describe('تقرير أداء الموظفين: كل الحقول بأوقات محكومة', () => {
+  it('المهام، الساعات، المتوسط، الالتزام، النجوم، الشكاوى، القطع، وترتيب الأعمدة (CSV)', async () => {
+    const passwordHash = await hashPassword('test-password');
+    const u = await db.user.create({ data: { name: 'معلم التقرير', phone: '967799990001', role: 'INSTALLER', passwordHash } });
+    const idle = await db.user.create({ data: { name: 'معلم بلا مهام', phone: '967799990002', role: 'INSTALLER', passwordHash } });
+    const team = await db.team.create({ data: { name: 'فريق التقرير', type: 'FURNITURE', members: { create: { userId: u.id } } } });
+    const t0 = new Date(Date.now() - 2 * 86400_000);
+    const min = (m: number) => new Date(t0.getTime() + m * 60_000);
+    const mk = async (o: { items: number | null; target: { teamId: string } | { assigneeId: string }; started: Date | null; done: Date; end: Date; status?: 'COMPLETED' | 'REASSIGNED' }) => {
+      const order = await createOrder(A.manager, orderInput({ branchId: branchA, invoiceNumber: 'INV-EMP', itemsCount: o.items ?? undefined }));
+      await db.taskAssignment.create({
+        data: { orderId: order.id, ...o.target, assignedById: A.manager.id, scheduledStart: t0, scheduledEnd: o.end, status: o.status ?? 'COMPLETED', startedAt: o.started, completedAt: o.done },
+      });
+      return order;
+    };
+    const o1 = await mk({ items: 4, target: { teamId: team.id }, started: t0, done: min(90), end: min(120) }); // في الموعد، 90 دقيقة
+    const o2 = await mk({ items: 1, target: { assigneeId: u.id }, started: t0, done: min(30), end: min(10) }); // متأخر، 30 دقيقة
+    await mk({ items: null, target: { teamId: team.id }, started: null, done: min(5), end: min(60) }); // بلا وقت بدء
+    await mk({ items: 9, target: { teamId: team.id }, started: t0, done: min(5), end: min(60), status: 'REASSIGNED' }); // لا يُحسب
+    await db.customerReview.create({ data: { orderId: o1.id, stars: 4, punctuality: 5, serviceQuality: 4 } });
+    for (const d of ['شكوى ١', 'شكوى ٢']) await createComplaint(A.manager, { orderId: o2.id, description: d });
+
+    const items = (await employeesReport(A.manager, {})).items;
+    const row = items.find((r) => r.id === u.id)!;
+    expect(Object.keys(row)).toEqual(['id', 'name', 'role', 'isActive', 'tasks', 'hours', 'avgMinutes', 'onTimeRate', 'avgStars', 'complaints', 'pieces']);
+    expect(row).toEqual({ id: u.id, name: 'معلم التقرير', role: 'INSTALLER', isActive: true, tasks: 3, hours: 2, avgMinutes: 60, onTimeRate: 67, avgStars: 4, complaints: 2, pieces: 5 });
+    expect(items.find((r) => r.id === idle.id)).toEqual({
+      id: idle.id, name: 'معلم بلا مهام', role: 'INSTALLER', isActive: true, tasks: 0, hours: 0, avgMinutes: null, onTimeRate: null, avgStars: null, complaints: 0, pieces: 0,
+    });
+  });
+});

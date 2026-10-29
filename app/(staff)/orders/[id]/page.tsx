@@ -21,7 +21,9 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
   // الموعد المقترح: موعد التكليف الحالي، أو أقرب ساعة من التاريخ المطلوب — والاقتراح يُحسب له
   const slotStart = active?.scheduledStart ?? proposedStart(o.requestedDate);
   const slotEnd = active?.scheduledEnd ?? new Date(slotStart.getTime() + 3 * 3600_000);
-  const candidates = canAssign ? await assignmentCandidates(actor, o, slotStart, slotEnd) : null;
+  // المرشحون يُحسبون فقط حين يظهر نموذج الإسناد أو إعادته
+  const showAssign = canAssign && (o.status === 'APPROVED' || active?.status === 'ASSIGNED' || active?.status === 'ISSUE');
+  const candidates = showAssign ? await assignmentCandidates(actor, o, slotStart, slotEnd) : null;
   const actorIds = [...new Set(o.assignments.flatMap((a) => a.events.map((e) => e.actorId)))];
   const users = new Map((await db.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
   const managers = can(actor, 'complaint.manage');
