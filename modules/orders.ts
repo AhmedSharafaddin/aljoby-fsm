@@ -1,11 +1,11 @@
 // طلبات الخدمة: الإنشاء من الفرع، الاعتماد، الجدولة والإسناد، الإيقاف والإلغاء، رابط التقييم.
-import type { OrderStatus, Prisma, Role, ServiceType } from '@prisma/client';
+import type { OrderStatus, Prisma, ServiceType } from '@prisma/client';
 import { z } from 'zod';
 import type { Actor } from '@/lib/auth';
 import { newToken, sha256 } from '@/lib/auth';
 import { AppError, audit, conflict, dayRange, db, forbidden, localDate, normalizePhone, notFound, parseLocal, type Tx, waLink } from '@/lib/core';
 import { assertCan, orderScope } from '@/lib/permissions';
-import { ACTIVE_ASSIGNMENT, canMoveOrder, overlaps, rankCandidates } from './rules';
+import { ACTIVE_ASSIGNMENT, canMoveOrder, overlaps, rankCandidates, ROLE_FOR_SERVICE } from './rules';
 
 const id = z.uuid();
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح');
@@ -177,8 +177,6 @@ export const assignSchema = z
   })
   .refine((v) => !!v.teamId !== !!v.assigneeId, { message: 'اختر فريقًا أو موظفًا واحدًا', path: ['teamId'] });
 
-const ROLE_FOR: Record<ServiceType, Role> = { FURNITURE: 'INSTALLER', CARPET: 'CARPET_LAYER', DELIVERY: 'DRIVER' };
-
 /**
  * يتحقق من الفريق/الموظف ويمنع الحجز المتضارب حسب السعة.
  * يقفل صف الفريق/الموظف داخل المعاملة كي لا يمر إسنادان متزامنان معًا.
@@ -199,7 +197,7 @@ async function checkCapacity(
   } else {
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${t.assigneeId} FOR UPDATE`;
     const user = await tx.user.findUnique({ where: { id: t.assigneeId }, include: { memberships: { include: { team: true } } } });
-    if (!user || !user.isActive || user.role !== ROLE_FOR[serviceType]) throw new AppError(422, 'الموظف غير مناسب لهذه الخدمة');
+    if (!user || !user.isActive || user.role !== ROLE_FOR_SERVICE[serviceType]) throw new AppError(422, 'الموظف غير مناسب لهذه الخدمة');
     if (actor.role === 'SUPERVISOR' && !user.memberships.some((m) => m.team.supervisorId === actor.id)) throw forbidden();
   }
   // ponytail: يُفحص التضارب للفريق أو للموظف المسند مباشرة كلٌّ على حدة؛ عضو فريق مُسند فرديًا في نفس الوقت لا يُكتشف.
@@ -215,6 +213,16 @@ async function checkCapacity(
   if (busy >= capacity) throw conflict(`يوجد تضارب: ${t.teamId ? 'الفريق' : 'الموظف'} محجوز في هذا الوقت (السعة ${capacity})`);
 }
 
+/** ينشئ التكليف وحدث ASSIGNED ويحرّك الطلب إلى SCHEDULED — مشترك بين الإسناد وإعادته. */
+async function createAssignment(tx: Tx, actor: Actor, order: { id: string; status: OrderStatus }, input: z.infer<typeof assignSchema>, start: Date, end: Date) {
+  const a = await tx.taskAssignment.create({
+    data: { orderId: order.id, teamId: input.teamId, assigneeId: input.assigneeId, assignedById: actor.id, scheduledStart: start, scheduledEnd: end },
+  });
+  await tx.taskEvent.create({ data: { assignmentId: a.id, type: 'ASSIGNED', actorId: actor.id } });
+  await moveOrder(tx, order, 'SCHEDULED', { scheduledStart: start, scheduledEnd: end });
+  return a;
+}
+
 export async function assignOrder(actor: Actor, orderId: string, raw: unknown) {
   assertCan(actor, 'order.assign');
   const input = assignSchema.parse(raw);
@@ -224,11 +232,7 @@ export async function assignOrder(actor: Actor, orderId: string, raw: unknown) {
     const order = await scopedOrder(tx, actor, orderId);
     if (order.status !== 'APPROVED') throw conflict('يُسند الطلب بعد اعتماده فقط');
     await checkCapacity(tx, actor, order.serviceType, input, start, end);
-    const a = await tx.taskAssignment.create({
-      data: { orderId: order.id, teamId: input.teamId, assigneeId: input.assigneeId, assignedById: actor.id, scheduledStart: start, scheduledEnd: end },
-    });
-    await tx.taskEvent.create({ data: { assignmentId: a.id, type: 'ASSIGNED', actorId: actor.id } });
-    await moveOrder(tx, order, 'SCHEDULED', { scheduledStart: start, scheduledEnd: end });
+    const a = await createAssignment(tx, actor, order, input, start, end);
     await audit(tx, actor.id, 'order', order.id, 'assign', { assignmentId: a.id, ...input });
     return a;
   });
@@ -248,11 +252,7 @@ export async function reassign(actor: Actor, assignmentId: string, raw: unknown)
     const closed = await tx.taskAssignment.updateMany({ where: { id: old.id, status: old.status }, data: { status: 'REASSIGNED' } });
     if (closed.count !== 1) throw conflict('تغيّرت المهمة للتو، حدّث الصفحة');
     await tx.taskEvent.create({ data: { assignmentId: old.id, type: 'REASSIGNED', actorId: actor.id } });
-    const a = await tx.taskAssignment.create({
-      data: { orderId: old.orderId, teamId: input.teamId, assigneeId: input.assigneeId, assignedById: actor.id, scheduledStart: start, scheduledEnd: end },
-    });
-    await tx.taskEvent.create({ data: { assignmentId: a.id, type: 'ASSIGNED', actorId: actor.id } });
-    await moveOrder(tx, old.order, 'SCHEDULED', { scheduledStart: start, scheduledEnd: end });
+    const a = await createAssignment(tx, actor, old.order, input, start, end);
     await audit(tx, actor.id, 'order', old.orderId, 'reassign', { from: old.id, to: a.id });
     return a;
   });

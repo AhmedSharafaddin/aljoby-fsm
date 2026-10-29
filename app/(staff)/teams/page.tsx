@@ -5,9 +5,9 @@ import { ar } from '@/lib/labels';
 import { can } from '@/lib/permissions';
 import { requirePage } from '@/lib/session';
 import { teamStates } from '@/modules/reports';
+import { ROLE_FOR_SERVICE } from '@/modules/rules';
 
 export const metadata = { title: 'الفرق' };
-const FIT = { FURNITURE: 'INSTALLER', CARPET: 'CARPET_LAYER', DELIVERY: 'DRIVER' } as const;
 
 export default async function Teams() {
   const actor = await requirePage('order.assign');
@@ -26,7 +26,7 @@ export default async function Teams() {
       <div className="grid gap-3 md:grid-cols-2">
         {states.map((s) => {
           const t = byId.get(s.id)!;
-          const candidates = staff.filter((u) => u.role === FIT[t.type] && !t.members.some((m) => m.userId === u.id));
+          const candidates = staff.filter((u) => u.role === ROLE_FOR_SERVICE[t.type] && !t.members.some((m) => m.userId === u.id));
           return (
             <div key={s.id} className="card space-y-2">
               <div className="flex items-start justify-between gap-2">

@@ -4,6 +4,7 @@ import { dayRange, db, fmtDateTime, localDate } from '@/lib/core';
 import { ar } from '@/lib/labels';
 import { orderScope } from '@/lib/permissions';
 import { requirePage } from '@/lib/session';
+import { ACTIVE_ASSIGNMENT } from '@/modules/rules';
 
 export const metadata = { title: 'الجدولة والتوزيع' };
 
@@ -20,7 +21,7 @@ export default async function Scheduling({ searchParams }: { searchParams: Promi
       where: { isActive: true, ...supervised },
       include: {
         assignments: {
-          where: { status: { in: ['ASSIGNED', 'IN_PROGRESS', 'ISSUE', 'COMPLETED'] }, scheduledStart: dayRange(date) },
+          where: { status: { in: [...ACTIVE_ASSIGNMENT, 'COMPLETED'] }, scheduledStart: dayRange(date) },
           include: { order: { include: { customer: true } } },
           orderBy: { scheduledStart: 'asc' },
         },
@@ -31,7 +32,7 @@ export default async function Scheduling({ searchParams }: { searchParams: Promi
       where: { role: 'DRIVER', isActive: true, ...(actor.role === 'SUPERVISOR' ? { memberships: { some: { team: supervised } } } : {}) },
       include: {
         assignments: {
-          where: { status: { in: ['ASSIGNED', 'IN_PROGRESS', 'ISSUE', 'COMPLETED'] }, scheduledStart: dayRange(date) },
+          where: { status: { in: [...ACTIVE_ASSIGNMENT, 'COMPLETED'] }, scheduledStart: dayRange(date) },
           include: { order: { include: { customer: true } } },
           orderBy: { scheduledStart: 'asc' },
         },

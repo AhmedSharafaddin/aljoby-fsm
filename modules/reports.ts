@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Actor } from '@/lib/auth';
 import { AppError, audit, dayRange, db, localDate } from '@/lib/core';
 import { assertCan, complaintScope, MANAGERS, orderScope } from '@/lib/permissions';
-import { isLate, OPEN_ORDER } from './rules';
+import { ACTIVE_ASSIGNMENT, isLate, OPEN_ORDER } from './rules';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null);
@@ -27,7 +27,7 @@ export async function dashboardSummary(actor: Actor, rawDate?: string) {
     db.serviceOrder.count({ where: and({ status: { in: OPEN_ORDER.filter((s) => s !== 'ON_HOLD') }, scheduledEnd: { lt: now } }) }),
     db.complaint.count({ where: { AND: [complaintScope(actor), { status: { notIn: ['RESOLVED', 'CLOSED'] } }] } }),
     db.complaint.count({ where: { AND: [complaintScope(actor), { openedAt: range }] } }),
-    db.customerReview.findMany({ where: { order: scope, submittedAt: { gte: new Date(now.getTime() - 30 * 86400_000) } } }),
+    db.customerReview.findMany({ where: { order: scope, submittedAt: { gte: new Date(now.getTime() - 30 * 86400_000) } }, select: { stars: true, serviceQuality: true } }),
     db.complaint.findMany({ where: { AND: [complaintScope(actor), { resolvedAt: { not: null } }] }, select: { openedAt: true, resolvedAt: true }, take: 500, orderBy: { resolvedAt: 'desc' } }),
   ]);
 
@@ -56,7 +56,7 @@ export async function teamStates(actor: Actor) {
     where: { isActive: true, ...(actor.role === 'SUPERVISOR' ? { supervisorId: actor.id } : {}) },
     include: {
       members: { include: { user: { select: { name: true } } } },
-      assignments: { where: { status: { in: ['ASSIGNED', 'IN_PROGRESS', 'ISSUE'] } }, select: { status: true, scheduledStart: true, scheduledEnd: true } },
+      assignments: { where: { status: { in: [...ACTIVE_ASSIGNMENT] } }, select: { status: true, scheduledStart: true, scheduledEnd: true } },
     },
     orderBy: [{ type: 'asc' }, { name: 'asc' }],
   });

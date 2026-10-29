@@ -6,7 +6,7 @@ import { AppError, audit, conflict, db, notFound, type Tx } from '@/lib/core';
 import { assertCan, fieldAssignmentScope, orderScope } from '@/lib/permissions';
 import { readStored, saveImage } from '@/lib/storage';
 import { moveOrder } from './orders';
-import { carpetWaste, completionMissing, nextTripStep } from './rules';
+import { ACTIVE_ASSIGNMENT, carpetWaste, completionMissing, isActiveAssignment, nextTripStep } from './rules';
 
 const id = z.uuid();
 
@@ -17,7 +17,7 @@ export async function listMyTasks(actor: Actor) {
     where: {
       AND: [
         fieldAssignmentScope(actor),
-        { OR: [{ status: { in: ['ASSIGNED', 'IN_PROGRESS', 'ISSUE'] } }, { status: 'COMPLETED', completedAt: { gte: since } }] },
+        { OR: [{ status: { in: [...ACTIVE_ASSIGNMENT] } }, { status: 'COMPLETED', completedAt: { gte: since } }] },
       ],
     },
     include: { order: { include: { customer: true, branch: true, trip: true } } },
@@ -50,14 +50,19 @@ async function lockedTask(tx: Tx, actor: Actor, taskId: string) {
 const event = (tx: Tx, assignmentId: string, actorId: string, type: string, note?: string) =>
   tx.taskEvent.create({ data: { assignmentId, actorId, type, note } });
 
+/** يبدأ التكليف (أول مرة أو بعد مشكلة) ويحرّك الطلب إلى IN_PROGRESS — مشترك بين بدء المهمة وتحميل الرحلة. */
+async function begin(tx: Tx, t: Awaited<ReturnType<typeof lockedTask>>) {
+  await tx.taskAssignment.update({ where: { id: t.id }, data: { status: 'IN_PROGRESS', startedAt: t.startedAt ?? new Date() } });
+  await moveOrder(tx, t.order, 'IN_PROGRESS');
+}
+
 export async function startTask(actor: Actor, taskId: string) {
   return db.$transaction(async (tx) => {
     const t = await lockedTask(tx, actor, taskId);
     if (t.status === 'IN_PROGRESS') return; // إعادة إرسال بعد ضعف الاتصال — لا شيء
     if (t.order.serviceType === 'DELIVERY') throw conflict('مهام التوصيل تبدأ بزر «تم التحميل»');
     if (t.status !== 'ASSIGNED' && t.status !== 'ISSUE') throw conflict('لا يمكن بدء هذه المهمة');
-    await tx.taskAssignment.update({ where: { id: t.id }, data: { status: 'IN_PROGRESS', startedAt: t.startedAt ?? new Date() } });
-    await moveOrder(tx, t.order, 'IN_PROGRESS');
+    await begin(tx, t);
     await event(tx, t.id, actor.id, 'STARTED');
   });
 }
@@ -80,7 +85,7 @@ export async function addNote(actor: Actor, taskId: string, raw: unknown) {
   const { note } = noteSchema.parse(raw);
   return db.$transaction(async (tx) => {
     const t = await lockedTask(tx, actor, taskId);
-    if (!['ASSIGNED', 'IN_PROGRESS', 'ISSUE'].includes(t.status)) throw conflict('المهمة مغلقة');
+    if (!isActiveAssignment(t.status)) throw conflict('المهمة مغلقة');
     await event(tx, t.id, actor.id, 'NOTE', note);
   });
 }
@@ -143,8 +148,7 @@ export async function advanceTrip(actor: Actor, taskId: string, raw: unknown) {
     if (nextTripStep(trip.status) !== to) throw conflict('خطوة الرحلة غير صحيحة');
     if (to === 'LOADED') {
       if (t.status !== 'ASSIGNED' && t.status !== 'ISSUE') throw conflict('لا يمكن بدء هذه الرحلة');
-      await tx.taskAssignment.update({ where: { id: t.id }, data: { status: 'IN_PROGRESS', startedAt: t.startedAt ?? new Date() } });
-      await moveOrder(tx, t.order, 'IN_PROGRESS');
+      await begin(tx, t);
     } else if (t.status !== 'IN_PROGRESS') {
       throw conflict('الرحلة ليست قيد التنفيذ');
     }

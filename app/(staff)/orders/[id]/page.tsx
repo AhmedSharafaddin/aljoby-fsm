@@ -6,7 +6,7 @@ import { ar } from '@/lib/labels';
 import { can } from '@/lib/permissions';
 import { requirePage } from '@/lib/session';
 import { assignmentCandidates, getOrder } from '@/modules/orders';
-import { isLate } from '@/modules/rules';
+import { isActiveAssignment, isLate } from '@/modules/rules';
 
 export const metadata = { title: 'تفاصيل الطلب' };
 
@@ -16,13 +16,14 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
   if (!o) {
     return <p className="card text-center">الطلب غير موجود أو لا تملك صلاحية عرضه. <Link className="link" href="/orders">العودة للطلبات</Link></p>;
   }
-  const active = o.assignments.find((a) => ['ASSIGNED', 'IN_PROGRESS', 'ISSUE'].includes(a.status));
+  const active = o.assignments.find((a) => isActiveAssignment(a.status));
   const canAssign = can(actor, 'order.assign');
   // الموعد المقترح: موعد التكليف الحالي، أو أقرب ساعة من التاريخ المطلوب — والاقتراح يُحسب له
   const slotStart = active?.scheduledStart ?? proposedStart(o.requestedDate);
   const slotEnd = active?.scheduledEnd ?? new Date(slotStart.getTime() + 3 * 3600_000);
   const candidates = canAssign ? await assignmentCandidates(actor, o, slotStart, slotEnd) : null;
-  const users = new Map((await db.user.findMany({ select: { id: true, name: true } })).map((u) => [u.id, u.name]));
+  const actorIds = [...new Set(o.assignments.flatMap((a) => a.events.map((e) => e.actorId)))];
+  const users = new Map((await db.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
   const managers = can(actor, 'complaint.manage');
 
   return (

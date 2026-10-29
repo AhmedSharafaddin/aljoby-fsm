@@ -1,7 +1,10 @@
 // قواعد الأعمال الخالصة (بلا قاعدة بيانات) — تُختبر وحدها في tests/rules.test.ts.
-import type { ComplaintStatus, FileKind, OrderStatus, ServiceType, TripStatus } from '@prisma/client';
+import type { ComplaintStatus, FileKind, OrderStatus, Role, ServiceType, TripStatus } from '@prisma/client';
 
 export const ACTIVE_ASSIGNMENT = ['ASSIGNED', 'IN_PROGRESS', 'ISSUE'] as const;
+export const isActiveAssignment = (status: string) => (ACTIVE_ASSIGNMENT as readonly string[]).includes(status);
+/** الدور الذي ينفّذ كل نوع خدمة — مرجع واحد للإسناد وعضوية الفرق وواجهة الفرق. */
+export const ROLE_FOR_SERVICE: Record<ServiceType, Role> = { FURNITURE: 'INSTALLER', CARPET: 'CARPET_LAYER', DELIVERY: 'DRIVER' };
 export const OPEN_ORDER: OrderStatus[] = ['NEW', 'APPROVED', 'SCHEDULED', 'IN_PROGRESS', 'ON_HOLD', 'ISSUE_REPORTED'];
 
 /** الانتقالات المسموحة لحالة الطلب. أي انتقال آخر يرفضه الخادم. */

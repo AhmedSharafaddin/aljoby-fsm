@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui';
 import { fmtDateTime } from '@/lib/core';
 import { ar } from '@/lib/labels';
 import { requirePage } from '@/lib/session';
-import { completionMissing, nextTripStep } from '@/modules/rules';
+import { completionMissing, isActiveAssignment, nextTripStep } from '@/modules/rules';
 import { getTask } from '@/modules/tasks';
 
 export const metadata = { title: 'تفاصيل المهمة' };
@@ -98,7 +98,7 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
       {(working || t.status === 'ASSIGNED') && (
         <ApiButton action={`${api}/issues`} label="الإبلاغ عن مشكلة" variant="btn-danger" askReason="ما المشكلة؟" />
       )}
-      {['ASSIGNED', 'IN_PROGRESS', 'ISSUE'].includes(t.status) && (
+      {isActiveAssignment(t.status) && (
         <ApiForm action={`${api}/notes`} submit="إضافة ملاحظة" reset success="أُضيفت الملاحظة" className="card space-y-2">
           <label className="label" htmlFor="note">ملاحظة على المهمة</label>
           <textarea id="note" name="note" className="input" required minLength={2} />

@@ -5,7 +5,7 @@ import type { Actor } from '@/lib/auth';
 import { hashPassword, sha256 } from '@/lib/auth';
 import { AppError, audit, conflict, db, forbidden, normalizePhone, notFound } from '@/lib/core';
 import { assertCan, complaintScope, MANAGERS, orderScope } from '@/lib/permissions';
-import { complaintMoveAllowed } from './rules';
+import { complaintMoveAllowed, ROLE_FOR_SERVICE } from './rules';
 
 const id = z.uuid();
 
@@ -165,8 +165,7 @@ export async function setTeamMember(actor: Actor, teamId: string, raw: unknown) 
   if (input.remove) {
     await db.teamMember.deleteMany({ where: { teamId: team.id, userId: input.userId } });
   } else {
-    const fit = { FURNITURE: 'INSTALLER', CARPET: 'CARPET_LAYER', DELIVERY: 'DRIVER' } as const;
-    const u = await db.user.findFirst({ where: { id: input.userId, isActive: true, role: fit[team.type] } });
+    const u = await db.user.findFirst({ where: { id: input.userId, isActive: true, role: ROLE_FOR_SERVICE[team.type] } });
     if (!u) throw new AppError(422, 'الموظف لا يناسب نوع الفريق');
     await db.teamMember.upsert({ where: { teamId_userId: { teamId: team.id, userId: u.id } }, create: { teamId: team.id, userId: u.id }, update: {} });
   }
