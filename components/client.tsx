@@ -167,6 +167,21 @@ export function LogoutButton() {
   );
 }
 
+/** صورة الكاميرا (حتى 5MB) تكفي منها نسخة 1600px بجودة 0.82 (~300KB) كدليل — توفّر بيانات الجوال ووقت الرفع. */
+async function shrink(file: File, max = 1600): Promise<File> {
+  try {
+    const bmp = await createImageBitmap(file); // يطبّق اتجاه الصورة (EXIF)
+    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(bmp.width * scale), height: Math.round(bmp.height * scale) });
+    canvas.getContext('2d')!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    bmp.close();
+    const blob = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, 'image/jpeg', 0.82));
+    return blob && blob.size < file.size ? new File([blob], 'photo.jpg', { type: 'image/jpeg' }) : file;
+  } catch {
+    return file; // متصفح لا يفك هذا الصيغة: يُرفع الأصل كما كان، والخادم يتحقق منه كالعادة
+  }
+}
+
 /** رفع صورة دليل من كاميرا الهاتف مباشرة. */
 export function PhotoUpload({ taskId, kind, label }: { taskId: string; kind: string; label: string }) {
   const router = useRouter();
@@ -185,12 +200,12 @@ export function PhotoUpload({ taskId, kind, label }: { taskId: string; kind: str
           onChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
-            const fd = new FormData();
-            fd.set('kind', kind);
-            fd.set('file', file);
             setBusy(true);
             setError(undefined);
             try {
+              const fd = new FormData();
+              fd.set('kind', kind);
+              fd.set('file', await shrink(file));
               await call(`/api/v1/field/tasks/${taskId}/files`, 'POST', fd);
               router.refresh();
             } catch (err) {
