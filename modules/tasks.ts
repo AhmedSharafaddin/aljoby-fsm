@@ -188,7 +188,7 @@ const RETENTION_DAYS = Number(process.env.LOCATION_RETENTION_DAYS || 30);
 
 /**
  * مشاركة الموقع: بضغطة من الموظف نفسه (الموافقة = الضغط + إذن المتصفح)،
- * وفقط أثناء مهمة قيد التنفيذ مسندة له. لا تتبع خلفي ولا خارج المهمة، والقديم يُحذف.
+ * وفقط أثناء مهمة قيد التنفيذ مسندة له. لا تتبع خلفي ولا خارج المهمة، والقديم يحذفه purgeOldLocations.
  */
 export async function shareLocation(actor: Actor, raw: unknown) {
   assertCan(actor, 'field.work');
@@ -197,7 +197,12 @@ export async function shareLocation(actor: Actor, raw: unknown) {
   if (!t) throw notFound();
   if (t.status !== 'IN_PROGRESS') throw conflict('يُشارك الموقع أثناء مهمة قيد التنفيذ فقط');
   await db.locationPing.create({ data: { userId: actor.id, assignmentId: t.id, lat: input.lat, lng: input.lng } });
-  await db.locationPing.deleteMany({ where: { capturedAt: { lt: new Date(Date.now() - RETENTION_DAYS * 86400_000) } } });
+}
+
+/** يحذف المواقع الأقدم من مدة الاحتفاظ — يشغّله cron يوميًا (scripts/purge-locations.ts)، لا ينتظر مشاركة جديدة. */
+export async function purgeOldLocations(now = new Date()) {
+  const { count } = await db.locationPing.deleteMany({ where: { capturedAt: { lt: new Date(now.getTime() - RETENTION_DAYS * 86400_000) } } });
+  return count;
 }
 
 /** تنزيل دليل: يراه من يرى الطلب (الإدارة/الفرع/المشرف) أو الفريق المسند. */

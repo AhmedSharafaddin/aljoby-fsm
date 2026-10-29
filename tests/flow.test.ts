@@ -5,12 +5,14 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { GET as listOrdersRoute, POST as createOrderRoute } from '@/app/api/v1/orders/route';
 import { POST as loginRoute } from '@/app/api/v1/auth/login/route';
 import { GET as teamsRoute } from '@/app/api/v1/teams/route';
+import { GET as healthRoute } from '@/app/api/v1/health/route';
+import { errorResponse, route } from '@/lib/api';
 import { createSession, hashPassword, login, type Actor } from '@/lib/auth';
 import { AppError, db, localDate, nullIfNotFound, parseLocal, toLocalInput } from '@/lib/core';
 import { approveOrder, assignmentCandidates, assignOrder, createOrder, createReviewLink, getOrder, listOrders, reassign, setOrderState } from '@/modules/orders';
 import { costsReport, createCost, dashboardSummary, employeesReport } from '@/modules/reports';
 import { createComplaint, createUser, listComplaints, reviewTarget, setTeamMember, submitReview, syncBranches, updateComplaint, updateUser } from '@/modules/service';
-import { advanceTrip, completeTask, getTask, listMyTasks, readFileFor, reportIssue, shareLocation, startTask, updateCarpet, uploadFile } from '@/modules/tasks';
+import { advanceTrip, completeTask, getTask, listMyTasks, purgeOldLocations, readFileFor, reportIssue, shareLocation, startTask, updateCarpet, uploadFile } from '@/modules/tasks';
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 const photo = (kind: string, signerName?: string) => {
@@ -590,5 +592,81 @@ describe('أخطاء حقيقية وُجدت بتتبع التنفيذ', () => {
     for (const q of ['0777700001', '0777-700001', '+967 777 700001', '700001']) {
       expect((await listOrders(A.manager, { q })).items.map((i) => i.id), q).toContain(a.id);
     }
+  });
+});
+
+describe('الأساس الإنتاجي: الصحة والاحتفاظ بالمواقع ومعرّف الطلب', () => {
+  const failingRequest = (headers: Record<string, string> = {}) => new Request('http://localhost/api/v1/x?secret=1', { method: 'POST', headers });
+
+  it('purgeOldLocations يحذف ما تجاوز مدة الاحتفاظ دون حاجة لمشاركة موقع جديدة', async () => {
+    const o = await createOrder(A.manager, orderInput({ branchId: branchA, invoiceNumber: 'INV-PURGE' }));
+    const a = await db.taskAssignment.create({
+      data: { orderId: o.id, teamId: teamF2, assignedById: A.manager.id, scheduledStart: new Date(), scheduledEnd: new Date(), status: 'CANCELLED' },
+    });
+    const row = (capturedAt: Date) => ({ userId: A.inst1.id, assignmentId: a.id, lat: 1, lng: 1, capturedAt });
+    await db.locationPing.createMany({ data: [row(new Date(Date.now() - 31 * 86400_000)), row(new Date(Date.now() - 29 * 86400_000))] });
+    expect(await purgeOldLocations()).toBe(1);
+    expect(await db.locationPing.count({ where: { capturedAt: { lt: new Date(Date.now() - 30 * 86400_000) } } })).toBe(0);
+    expect(await db.locationPing.count({ where: { capturedAt: { lt: new Date(Date.now() - 28 * 86400_000) } } })).toBeGreaterThanOrEqual(1);
+  });
+
+  it('GET /health بلا جلسة: 200 والقاعدة تعمل', async () => {
+    const res = await healthRoute();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok' });
+  });
+
+  it('GET /health: 503 عند انقطاع القاعدة، بلا تسريب رسالة الخطأ', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const q = vi.spyOn(db, '$queryRaw').mockRejectedValueOnce(new Error('connection refused postgres://u:p@host'));
+    const res = await healthRoute();
+    q.mockRestore();
+    log.mockRestore();
+    expect(res.status).toBe(503);
+    expect(JSON.stringify(await res.json())).not.toContain('postgres://');
+  });
+
+  it('خطأ غير متوقع: سطر JSON واحد بمعرّف الطلب نفسه في الترويسة، بلا الاستعلام ولا الجسم', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = errorResponse(new Error('boom'), failingRequest({ 'x-request-id': 'req-abc_123' }));
+    const lines = log.mock.calls.map((c) => c[0]);
+    log.mockRestore();
+    expect(res.status).toBe(500);
+    expect(res.headers.get('x-request-id')).toBe('req-abc_123');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({ level: 'error', requestId: 'req-abc_123', method: 'POST', path: '/api/v1/x', name: 'Error', message: 'boom' });
+    expect(lines[0]).not.toContain('secret=1');
+  });
+
+  it('بلا معرّف أو بمعرّف مشوّه يُولَّد معرّف جديد (لا حقن في السجل)', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const none = errorResponse(new Error('a'), failingRequest());
+    const bad = errorResponse(new Error('b'), failingRequest({ 'x-request-id': 'x'.repeat(200) }));
+    const logged = log.mock.calls.map((c) => JSON.parse(c[0]).requestId);
+    log.mockRestore();
+    for (const r of [none, bad]) expect(r.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+    expect(logged).toEqual([none.headers.get('x-request-id'), bad.headers.get('x-request-id')]);
+  });
+
+  it('أخطاء الأعمال تحمل المعرّف ولا تُسجَّل كأعطال', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = errorResponse(new AppError(404, 'x'), failingRequest({ 'x-request-id': 'r1' }));
+    const calls = log.mock.calls.length;
+    log.mockRestore();
+    expect(res.status).toBe(404);
+    expect(res.headers.get('x-request-id')).toBe('r1');
+    expect(calls).toBe(0);
+  });
+
+  it('route() يمرّر المعرّف عند خطأ غير متوقع داخل المعالج', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { token } = await createSession(A.manager.id);
+    const handler = route(async () => {
+      throw new Error('handler exploded');
+    });
+    const res = await handler(json('http://localhost/api/v1/x', { method: 'POST', token, headers: { 'x-request-id': 'req-77' } }), noParams);
+    log.mockRestore();
+    expect(res.status).toBe(500);
+    expect(res.headers.get('x-request-id')).toBe('req-77');
   });
 });

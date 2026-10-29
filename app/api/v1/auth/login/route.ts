@@ -20,6 +20,6 @@ export async function POST(req: Request) {
       { headers: { 'Set-Cookie': sessionCookie(token, expiresAt) } },
     );
   } catch (e) {
-    return errorResponse(e);
+    return errorResponse(e, req);
   }
 }

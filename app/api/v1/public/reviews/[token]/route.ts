@@ -10,6 +10,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ token: string 
     await submitReview((await ctx.params).token, await req.json().catch(() => ({})));
     return Response.json({ data: null });
   } catch (e) {
-    return errorResponse(e);
+    return errorResponse(e, req);
   }
 }

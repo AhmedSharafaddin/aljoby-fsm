@@ -32,6 +32,16 @@ server {
 }
 ```
 
+## المهام الدورية والمراقبة
+
+```bash
+# crontab — حذف مواقع الفرق الأقدم من LOCATION_RETENTION_DAYS (إلزامي: التطبيق لا يحذفها بنفسه)
+15 3 * * * cd /srv/aljoby-fsm && npx tsx scripts/purge-locations.ts >> /var/log/aljoby-fsm-purge.log 2>&1
+```
+
+- فحص الصحة: `GET /api/v1/health` يعطي 200 `{"status":"ok"}`، أو 503 إن انقطعت القاعدة. اربطه بأداة المراقبة.
+- كل خطأ غير متوقع يُسجَّل سطر JSON واحدًا فيه `requestId`، والرد يحمل نفس القيمة في `x-request-id`. ليمرّر Nginx معرّفه أضف `proxy_set_header X-Request-Id $request_id;`.
+
 ## التحديث
 
 ```bash
