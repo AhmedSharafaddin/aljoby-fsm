@@ -60,7 +60,8 @@ export async function startTask(actor: Actor, taskId: string) {
   return db.$transaction(async (tx) => {
     const t = await lockedTask(tx, actor, taskId);
     if (t.status === 'IN_PROGRESS') return; // إعادة إرسال بعد ضعف الاتصال — لا شيء
-    if (t.order.serviceType === 'DELIVERY') throw conflict('مهام التوصيل تبدأ بزر «تم التحميل»');
+    // التوصيل يبدأ بزر «تم التحميل»؛ بعد ذلك (مشكلة أو سائق جديد وسط الرحلة) يُستأنف بالبدء
+    if (t.order.serviceType === 'DELIVERY' && (t.order.trip?.status ?? 'ASSIGNED') === 'ASSIGNED') throw conflict('مهام التوصيل تبدأ بزر «تم التحميل»');
     if (t.status !== 'ASSIGNED' && t.status !== 'ISSUE') throw conflict('لا يمكن بدء هذه المهمة');
     await begin(tx, t);
     await event(tx, t.id, actor.id, 'STARTED');
@@ -149,6 +150,8 @@ export async function advanceTrip(actor: Actor, taskId: string, raw: unknown) {
     if (to === 'LOADED') {
       if (t.status !== 'ASSIGNED' && t.status !== 'ISSUE') throw conflict('لا يمكن بدء هذه الرحلة');
       await begin(tx, t);
+    } else if (t.status === 'ASSIGNED' || t.status === 'ISSUE') {
+      await begin(tx, t); // استئناف بعد مشكلة، أو سائق جديد بعد إعادة إسناد وسط الرحلة
     } else if (t.status !== 'IN_PROGRESS') {
       throw conflict('الرحلة ليست قيد التنفيذ');
     }

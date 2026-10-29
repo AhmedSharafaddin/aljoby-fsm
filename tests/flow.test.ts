@@ -499,3 +499,96 @@ describe('المؤجَّل المنفَّذ', () => {
     expect(() => nullIfNotFound(new Error('connection refused'))).toThrow('connection refused');
   });
 });
+
+describe('أخطاء حقيقية وُجدت بتتبع التنفيذ', () => {
+  const deliveryOrder = async (invoice: string, assigneeId: string, h: [number, number]) => {
+    const o = await createOrder(A.branchA, orderInput({ serviceType: 'DELIVERY', invoiceNumber: invoice }));
+    await approveOrder(A.manager, o.id);
+    const t = await assignOrder(A.manager, o.id, { assigneeId, ...slot(h[0], h[1]) });
+    return { o, t };
+  };
+  const state = async (orderId: string) => {
+    const g = await getOrder(A.manager, orderId);
+    const last = g.assignments[g.assignments.length - 1];
+    return [g.status, last.status, g.trip?.status];
+  };
+
+  it('التوصيل: مشكلة بعد التحميل لا تسدّ الطريق — الخطوة التالية تستأنف المهمة', async () => {
+    const { o, t } = await deliveryOrder('INV-D-ISSUE1', A.driver.id, [14, 15]);
+    await advanceTrip(A.driver, t.id, { to: 'LOADED' });
+    await reportIssue(A.driver, t.id, { note: 'عطل في السيارة' });
+    expect(await state(o.id)).toEqual(['ISSUE_REPORTED', 'ISSUE', 'LOADED']);
+    await advanceTrip(A.driver, t.id, { to: 'DEPARTED' });
+    expect(await state(o.id)).toEqual(['IN_PROGRESS', 'IN_PROGRESS', 'DEPARTED']);
+  });
+
+  it('التوصيل: مشكلة عند الوصول تُستأنف بـ«بدء» ثم يُسلَّم بعد التوقيع', async () => {
+    const { o, t } = await deliveryOrder('INV-D-ISSUE2', A.driver.id, [16, 17]);
+    for (const to of ['LOADED', 'DEPARTED', 'ARRIVED'] as const) await advanceTrip(A.driver, t.id, { to });
+    await reportIssue(A.driver, t.id, { note: 'العميل غير موجود' });
+    await startTask(A.driver, t.id); // قبل الإصلاح: 409 «مهام التوصيل تبدأ بزر تم التحميل»
+    await uploadFile(A.driver, t.id, photo('SIGNATURE', 'مستلم'));
+    await advanceTrip(A.driver, t.id, { to: 'DELIVERED' });
+    expect(await state(o.id)).toEqual(['COMPLETED', 'COMPLETED', 'DELIVERED']);
+  });
+
+  it('التوصيل: إعادة الإسناد لسائق آخر وسط الرحلة تتيح له المتابعة من حيث وصلت', async () => {
+    const d2u = await db.user.create({ data: { name: 'سائق ٢', phone: '967799900001', role: 'DRIVER', passwordHash: 'x' } });
+    const d2: Actor = { id: d2u.id, name: d2u.name, role: 'DRIVER', branchId: null };
+    const { o, t } = await deliveryOrder('INV-D-ISSUE3', A.driver.id, [18, 19]);
+    await advanceTrip(A.driver, t.id, { to: 'LOADED' });
+    await reportIssue(A.driver, t.id, { note: 'تعطلت السيارة' });
+    const t2 = await reassign(A.manager, t.id, { assigneeId: d2.id, ...slot(18, 19) });
+    await advanceTrip(d2, t2.id, { to: 'DEPARTED' });
+    expect(await state(o.id)).toEqual(['IN_PROGRESS', 'IN_PROGRESS', 'DEPARTED']);
+  });
+
+  it('التوصيل: قبل التحميل ما زال البدء المباشر مرفوضًا', async () => {
+    const { t } = await deliveryOrder('INV-D-ISSUE4', A.driver.id, [20, 21]);
+    expect(await status(startTask(A.driver, t.id))).toBe(409);
+  });
+
+  it('تكلفة فوق حد العمود الصحيح 32 بت تُرفض 422 بدل أن تنهار 500، والحد نفسه مقبول', async () => {
+    const base = { category: 'FUEL', date: localDate() };
+    expect(await status(createCost(A.manager, { ...base, amount: '21474836.48' }))).toBe(422);
+    const ok = await createCost(A.manager, { ...base, amount: '21474836.47' });
+    expect(ok.amountMinor).toBe(2147483647);
+    await db.workCost.delete({ where: { id: ok.id } });
+  });
+
+  it('دخول ناجح لا يستهلك حد المحاولات: 12 دخولًا من نفس الـIP لا يُحجب', async () => {
+    for (let i = 0; i < 12; i++) {
+      const u = await db.user.findUniqueOrThrow({ where: { id: A[['manager', 'sup', 'branchA'][i % 3]].id } });
+      const res = await loginRoute(
+        json('http://localhost/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'x-forwarded-for': '203.0.113.7' },
+          body: JSON.stringify({ phone: u.phone, password: 'test-password' }),
+        }),
+      );
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it('...لكن الإخفاق ما زال يُحسب: 10 كلمات خاطئة من IP تحجب المحاولة التالية ولو صحيحة', async () => {
+    const u = await db.user.findUniqueOrThrow({ where: { id: A.sup2.id } });
+    const attempt = (password: string) =>
+      loginRoute(json('http://localhost/api/v1/auth/login', { method: 'POST', headers: { 'x-forwarded-for': '203.0.113.9' }, body: JSON.stringify({ phone: u.phone, password }) }));
+    for (let i = 0; i < 10; i++) expect((await attempt('wrong')).status).toBe(401);
+    expect((await attempt('test-password')).status).toBe(429);
+  });
+
+  it('جسم JSON تالف في تسجيل الدخول يعطي 422 لا 500', async () => {
+    const res = await loginRoute(json('http://localhost/api/v1/auth/login', { method: 'POST', headers: { 'x-forwarded-for': '203.0.113.8' }, body: 'not json' }));
+    expect(res.status).toBe(422);
+  });
+
+  it('البحث: رقم الفاتورة لا يطابق هواتف العملاء، والهاتف بالصيغة المحلية يُوجد', async () => {
+    const a = await createOrder(A.manager, orderInput({ branchId: branchA, invoiceNumber: 'ZZ-100', customerName: 'عميل س', customerPhone: '0777700001' }));
+    const b = await createOrder(A.manager, orderInput({ branchId: branchA, invoiceNumber: 'ZZ-77', customerName: 'عميل ص', customerPhone: '0713000002' }));
+    expect((await listOrders(A.manager, { q: 'ZZ-77' })).items.map((i) => i.id)).toEqual([b.id]);
+    for (const q of ['0777700001', '0777-700001', '+967 777 700001', '700001']) {
+      expect((await listOrders(A.manager, { q })).items.map((i) => i.id), q).toContain(a.id);
+    }
+  });
+});

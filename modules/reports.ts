@@ -185,6 +185,7 @@ export async function createCost(actor: Actor, raw: unknown) {
   const [major, frac = ''] = input.amount.split('.');
   const amountMinor = Number(major) * 100 + Number(frac.padEnd(2, '0'));
   if (amountMinor <= 0) throw new AppError(422, 'المبلغ يجب أن يكون أكبر من صفر');
+  if (amountMinor > 2_147_483_647) throw new AppError(422, 'المبلغ كبير جدًا (الحد الأقصى 21474836.47)'); // عمود amountMinor من نوع Int 32 بت
   let orderId: string | undefined;
   if (input.orderNumber) {
     const o = await db.serviceOrder.findUnique({ where: { number: input.orderNumber }, select: { id: true } });

@@ -110,6 +110,12 @@ export function audit(tx: Tx, actorId: string | null, entityType: string, entity
 const hits = new Map<string, number[]>();
 const LONGEST_WINDOW_MS = 3600_000; // أطول نافذة مستخدمة (التقييم: ساعة)
 export const rateLimitSize = () => hits.size;
+/** يسحب آخر محاولة سُجّلت للمفتاح — لمحاولة نجحت فلا تُحسب ضمن الإخفاقات (شبكة مشتركة، أو غياب X-Forwarded-For). */
+export function rateLimitRefund(key: string) {
+  const times = hits.get(key);
+  times?.pop();
+  if (times?.length === 0) hits.delete(key);
+}
 export function rateLimit(key: string, max: number, windowMs: number, now = Date.now()) {
   // تنظيف المفاتيح القديمة كي لا تكبر الذاكرة مع كل IP/رقم جديد
   if (hits.size > 1000) {

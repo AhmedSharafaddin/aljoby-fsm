@@ -48,6 +48,8 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
         <ApiButton action={`${api}/trip`} body={{ to: next }} label={ar.tripAction[next]} />
       )}
 
+      {isTrip && canStart && next === 'DELIVERED' && <ApiButton action={`${api}/start`} label="استئناف المهمة" />}
+
       {isTrip && (
         <ol className="card flex justify-between text-center text-xs">
           {(['LOADED', 'DEPARTED', 'ARRIVED', 'DELIVERED'] as const).map((s) => {

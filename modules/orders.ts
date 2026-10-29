@@ -75,6 +75,7 @@ export const PAGE_SIZE = 30;
 export async function listOrders(actor: Actor, raw: unknown) {
   const f = listFilters.parse(raw);
   const q = f.q;
+  const phoneDigits = q && /^[\d\s+\-().]+$/.test(q) ? q.replace(/\D+/g, '').replace(/^0+/, '') : ''; // الهاتف مخزَّن بصيغة 967… فلا نبحث بصفر بادئ
   const where: Prisma.ServiceOrderWhereInput = {
     AND: [
       orderScope(actor),
@@ -84,7 +85,7 @@ export async function listOrders(actor: Actor, raw: unknown) {
             OR: [
               { invoiceNumber: { contains: q, mode: 'insensitive' } },
               { customer: { name: { contains: q, mode: 'insensitive' } } },
-              { customer: { phone: { contains: q.replace(/\D+/g, '') || q } } },
+              ...(phoneDigits ? [{ customer: { phone: { contains: phoneDigits } } }] : []),
               ...(/^\d+$/.test(q) && Number(q) < 2 ** 31 ? [{ number: Number(q) }] : []),
             ],
           }
