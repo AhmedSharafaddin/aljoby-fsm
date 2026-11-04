@@ -1,0 +1,30 @@
+# systemd: /etc/systemd/system/aljoby-fsm.service  ثم: systemctl daemon-reload && systemctl enable --now aljoby-fsm
+# الأسرار في /etc/aljoby-fsm.env (chmod 600، مالكه root) بصيغة KEY="value" — لا تُحفظ في المستودع.
+[Unit]
+Description=Aljoby field service management
+After=network.target postgresql.service
+# إعداد خاطئ يُنهي التطبيق بـexit 1؛ بعد 5 إخفاقات في دقيقة تتوقف الخدمة وتظهر failed بدل حلقة صامتة
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+User=aljoby
+Group=aljoby
+WorkingDirectory=/srv/aljoby-fsm
+EnvironmentFile=/etc/aljoby-fsm.env
+Environment=NODE_ENV=production
+# node مباشرة لا npm: npm يكتب سجلاته في مجلد المنزل وهو محجوب هنا (ProtectHome). عدّل مسار node (command -v node).
+# يستمع على الحلقة المحلية فقط (مُختبَر): الوصول الوحيد عبر Nginx
+ExecStart=/usr/bin/node /srv/aljoby-fsm/node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3000
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+# المسموح بالكتابة: الصور وذاكرة البناء (عدّل STORAGE_DIR إن اختلف)
+ReadWritePaths=/var/lib/aljoby-fsm /srv/aljoby-fsm/.next
+
+[Install]
+WantedBy=multi-user.target
