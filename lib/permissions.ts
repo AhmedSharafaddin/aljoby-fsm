@@ -31,9 +31,16 @@ export function assertCan(actor: Pick<Actor, 'role'>, cap: Cap) {
   if (!can(actor, cap)) throw forbidden();
 }
 
-/** التكليفات التي يعمل عليها الموظف الميداني: المسندة له مباشرة أو لفريقه. */
+/**
+ * التكليفات التي يعمل عليها الموظف الميداني: المسندة له مباشرة أو لفريقه.
+ * ما أُغلق بإعادة الإسناد أو الإلغاء لا يعود له (وإلا بقي يرى هاتف العميل وعنوانه وصوره)؛ والمنجز يبقى لصاحبه.
+ * كل مسارات الميدان (المهام، الملفات، الموقع، نطاق الطلبات) تمر من هنا.
+ */
 export function fieldAssignmentScope(actor: Actor): Prisma.TaskAssignmentWhereInput {
-  return { OR: [{ assigneeId: actor.id }, { team: { members: { some: { userId: actor.id } } } }] };
+  return {
+    status: { notIn: ['REASSIGNED', 'CANCELLED'] },
+    OR: [{ assigneeId: actor.id }, { team: { members: { some: { userId: actor.id } } } }],
+  };
 }
 
 /** الطلبات المرئية لكل دور. */

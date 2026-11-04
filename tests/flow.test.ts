@@ -199,7 +199,7 @@ describe('إعادة الإسناد تحفظ التاريخ', () => {
     const after = await getOrder(A.manager, o.id);
     expect(after.status).toBe('SCHEDULED');
     expect(after.assignments.map((a) => a.status)).toEqual(['REASSIGNED', 'ASSIGNED']);
-    expect(await status(startTask(A.inst2, first.id))).toBe(409); // التكليف القديم مغلق
+    expect(await status(startTask(A.inst2, first.id))).toBe(404); // التكليف القديم مغلق ولم يعد يخصه (كان 409 قبل أن يُحجب عنه)
   });
 });
 
@@ -709,5 +709,62 @@ describe('تقرير أداء الموظفين: كل الحقول بأوقات �
     expect(items.find((r) => r.id === idle.id)).toEqual({
       id: idle.id, name: 'معلم بلا مهام', role: 'INSTALLER', isActive: true, tasks: 0, hours: 0, avgMinutes: null, onTimeRate: null, avgStars: null, complaints: 0, pieces: 0,
     });
+  });
+});
+
+describe('نطاق الموظف الميداني: لا يرى ما لم يعد مسندًا إليه', () => {
+  it('بعد إعادة الإسناد يفقد القديم الوصول للطلب والمهمة والصور والموقع، ويراها الجديد', async () => {
+    const passwordHash = await hashPassword('test-password');
+    const mkUser = async (n: number) => {
+      const u = await db.user.create({ data: { name: `ميداني ${n}`, phone: `96779990010${n}`, role: 'INSTALLER', passwordHash } });
+      return { id: u.id, name: u.name, role: 'INSTALLER', branchId: null } as Actor;
+    };
+    const [oldHolder, newHolder] = [await mkUser(1), await mkUser(2)];
+    const mkTeam = (name: string, u: Actor) => db.team.create({ data: { name, type: 'FURNITURE', members: { create: { userId: u.id } } } });
+    const [teamOld, teamNew] = [await mkTeam('فريق قديم', oldHolder), await mkTeam('فريق جديد', newHolder)];
+
+    const o = await createOrder(A.manager, orderInput({ branchId: branchA, invoiceNumber: 'INV-SCOPE' }));
+    await approveOrder(A.manager, o.id);
+    const first = await assignOrder(A.manager, o.id, { teamId: teamOld.id, ...slot(1, 2) });
+    await startTask(oldHolder, first.id);
+    const file = await uploadFile(oldHolder, first.id, photo('BEFORE'));
+    await reportIssue(oldHolder, first.id, { note: 'العميل غير موجود' });
+    expect(await status(getOrder(oldHolder, o.id))).toBe(200); // قبل إعادة الإسناد يراه
+
+    await reassign(A.manager, first.id, { teamId: teamNew.id, ...slot(1, 2) });
+
+    expect(await status(getOrder(oldHolder, o.id))).toBe(404); // هاتف العميل وعنوانه
+    expect(await status(getTask(oldHolder, first.id))).toBe(404);
+    expect(await status(readFileFor(oldHolder, file.id))).toBe(404); // صور الدليل
+    expect(await status(shareLocation(oldHolder, { assignmentId: first.id, lat: 1, lng: 1 }))).toBe(404);
+    expect((await listOrders(oldHolder, {})).items.map((i) => i.id)).not.toContain(o.id);
+    expect((await listMyTasks(oldHolder)).map((t) => t.id)).not.toContain(first.id);
+
+    expect(await status(getOrder(newHolder, o.id))).toBe(200);
+    expect(await status(readFileFor(newHolder, file.id))).toBe(200);
+  });
+
+  it('طلب أُلغي أو أُوقف لا يبقى ظاهرًا لمن كان مسندًا إليه، والمكتمل يبقى لصاحبه', async () => {
+    const passwordHash = await hashPassword('test-password');
+    const u = await db.user.create({ data: { name: 'ميداني ٣', phone: '967799990103', role: 'INSTALLER', passwordHash } });
+    const actor = { id: u.id, name: u.name, role: 'INSTALLER', branchId: null } as Actor;
+    const team = await db.team.create({ data: { name: 'فريق ٣', type: 'FURNITURE', members: { create: { userId: u.id } } } });
+
+    const cancelled = await createOrder(A.manager, orderInput({ branchId: branchA, invoiceNumber: 'INV-SCOPE-C' }));
+    await approveOrder(A.manager, cancelled.id);
+    await assignOrder(A.manager, cancelled.id, { teamId: team.id, ...slot(3, 4) });
+    expect(await status(getOrder(actor, cancelled.id))).toBe(200);
+    await setOrderState(A.manager, cancelled.id, 'CANCELLED', { reason: 'العميل ألغى' });
+    expect(await status(getOrder(actor, cancelled.id))).toBe(404);
+
+    const done = await createOrder(A.manager, orderInput({ branchId: branchA, invoiceNumber: 'INV-SCOPE-D' }));
+    await approveOrder(A.manager, done.id);
+    const t = await assignOrder(A.manager, done.id, { teamId: team.id, ...slot(5, 6) });
+    await startTask(actor, t.id);
+    for (const k of ['BEFORE', 'AFTER']) await uploadFile(actor, t.id, photo(k));
+    await uploadFile(actor, t.id, photo('SIGNATURE', 'العميل'));
+    await completeTask(actor, t.id);
+    expect(await status(getOrder(actor, done.id))).toBe(200); // عمله المنجز يبقى له
+    expect(await status(getTask(actor, t.id))).toBe(200);
   });
 });
