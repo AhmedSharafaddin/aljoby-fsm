@@ -1,0 +1,3 @@
+# سكربتات الخادم وملفاته يجب أن تبقى LF مهما كان إعداد Git على ويندوز (CRLF يكسر bash على Linux)
+*.sh text eol=lf
+deploy/* text eol=lf
