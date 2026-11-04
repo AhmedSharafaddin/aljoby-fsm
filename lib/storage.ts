@@ -1,7 +1,7 @@
 // تخزين الأدلة (صور/توقيعات) خارج public — تُقدَّم فقط عبر /api/v1/files/:id بعد فحص الصلاحية.
 // ponytail: قرص محلي؛ للإنتاج على أكثر من خادم استبدل saveFile/readFile بتخزين كائنات S3 خاص.
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile as fsRead, writeFile } from 'node:fs/promises';
+import { mkdir, readFile as fsRead, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from './core';
 
@@ -82,6 +82,11 @@ export async function saveImage(file: File) {
   await mkdir(path.join(/*turbopackIgnore: true*/ DIR, path.dirname(key)), { recursive: true });
   await writeFile(path.join(/*turbopackIgnore: true*/ DIR, key), buf);
   return { key, mime: type.mime };
+}
+
+/** يحذف ملفًا كُتب ثم فشل تسجيله في القاعدة — يُستدعى بمفتاح أنشأه saveImage فقط. */
+export async function removeStored(key: string) {
+  await rm(path.join(/*turbopackIgnore: true*/ DIR, key), { force: true });
 }
 
 export function readStored(key: string) {

@@ -22,6 +22,10 @@ ADMIN_PHONE=967XXXXXXXXX ADMIN_PASSWORD='كلمة-مرور-قوية-12+' npx tsx
 
 ثم من «المستخدمون والفروع» اضغط **مزامنة من موقع الجوبي**.
 
+## ما يتحقق منه التطبيق عند الإقلاع
+
+في الإنتاج يتوقف الخادم (exit 1) برسالة واضحة إن نقص `DATABASE_URL` أو `APP_URL` (يجب أن يكون https) أو `STORAGE_DIR`. راجع `journalctl -u aljoby-fsm` إن لم يقلع. قائمة الإطلاق الكاملة: [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md).
+
 ## Nginx
 
 ```nginx
@@ -60,4 +64,4 @@ tar czf /backup/fsm-files-$(date +%F).tgz -C /var/lib/aljoby-fsm .
 pg_restore --clean --if-exists -d "$DATABASE_URL" /backup/fsm-YYYY-MM-DD.dump
 ```
 
-احتفظ بالنسخ خارج الخادم. سياسة الاحتفاظ بالصور والتواقيع: تُقرّرها الإدارة (مقترح: 24 شهرًا).
+احتفظ بالنسخ خارج الخادم. **جرّب الاستعادة على خادم تجريبي مرة واحدة على الأقل قبل الإطلاق** — نسخة لم تُجرَّب استعادتها ليست ضمانًا. سياسة الاحتفاظ بالصور والتواقيع: تُقرّرها الإدارة (مقترح: 24 شهرًا).

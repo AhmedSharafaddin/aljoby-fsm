@@ -42,11 +42,8 @@ export async function createOrder(actor: Actor, raw: unknown) {
   const phone = normalizePhone(input.customerPhone);
 
   return db.$transaction(async (tx) => {
-    const customer = await tx.customer.upsert({
-      where: { phone },
-      create: { phone, name: input.customerName },
-      update: { name: input.customerName },
-    });
+    // العميل يُعرَّف بهاتفه: الاسم الأول يبقى (لا يغيّره فرع آخر بأثر رجعي على طلبات غيره)، والمُدخل المختلف يُسجَّل في التدقيق
+    const customer = await tx.customer.upsert({ where: { phone }, create: { phone, name: input.customerName }, update: {} });
     const order = await tx.serviceOrder.create({
       data: {
         branchId, customerId: customer.id, invoiceNumber: input.invoiceNumber, serviceType: input.serviceType,
@@ -58,7 +55,7 @@ export async function createOrder(actor: Actor, raw: unknown) {
           : undefined,
       },
     });
-    await audit(tx, actor.id, 'order', order.id, 'create');
+    await audit(tx, actor.id, 'order', order.id, 'create', customer.name === input.customerName ? undefined : { customerNameEntered: input.customerName });
     return order;
   });
 }

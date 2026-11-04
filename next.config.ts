@@ -8,6 +8,8 @@ const config: NextConfig = {
     return [{
       source: '/:path*',
       headers: [
+        // تتجاهلها المتصفحات على http (التطوير المحلي)؛ بلا includeSubDomains كي لا تمسّ نطاقات أخرى للشركة
+        { key: 'Strict-Transport-Security', value: 'max-age=31536000' },
         { key: 'X-Frame-Options', value: 'DENY' },
         { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'Referrer-Policy', value: 'same-origin' },

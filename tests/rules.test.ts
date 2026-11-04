@@ -1,6 +1,7 @@
 // اختبارات وحدة لمنطق الحالات والهدر والوقت والصلاحيات — بلا قاعدة بيانات.
 import { describe, expect, it } from 'vitest';
 import { dayRange, normalizePhone, parseLocal, proposedStart, rateLimit, rateLimitSize } from '@/lib/core';
+import { missingProdEnv } from '@/lib/env';
 import { can, orderScope } from '@/lib/permissions';
 import { sniffImage } from '@/lib/storage';
 import { toCsv } from '@/modules/reports';
@@ -185,5 +186,27 @@ describe('أدوات', () => {
     expect(sniffImage(WEBP_1X1.slice(0, WEBP_1X1.length - 2))).toBeNull(); // حجم RIFF لا يطابق الملف
     expect(sniffImage(withPngSize(0, 1))).toBeNull(); // عرض صفر
     expect(sniffImage(withPngSize(100_000, 100_000))).toBeNull(); // أبعاد مبالغ فيها (قنبلة فك ضغط عند من يعرضها)
+  });
+});
+
+describe('إعدادات الإنتاج تفشل عند الإقلاع لا لاحقًا', () => {
+  const good = { NODE_ENV: 'production', DATABASE_URL: 'postgresql://u:p@db/app', APP_URL: 'https://fsm.example.com', STORAGE_DIR: '/var/lib/aljoby-fsm' };
+  it('خارج الإنتاج لا شيء مطلوب', () => {
+    expect(missingProdEnv({})).toEqual([]);
+    expect(missingProdEnv({ NODE_ENV: 'development' })).toEqual([]);
+  });
+  it('إعداد إنتاج سليم يمر', () => {
+    expect(missingProdEnv(good)).toEqual([]);
+    expect(missingProdEnv({ ...good, APP_URL: 'http://localhost:3000' })).toEqual([]); // تشغيل محلي بوضع الإنتاج
+  });
+  it('كل متغير ناقص يُذكر باسمه', () => {
+    const msgs = missingProdEnv({ NODE_ENV: 'production' });
+    expect(msgs).toHaveLength(3);
+    for (const name of ['DATABASE_URL', 'APP_URL', 'STORAGE_DIR']) expect(msgs.join('\n')).toContain(name);
+    expect(missingProdEnv({ ...good, STORAGE_DIR: '  ' })).toHaveLength(1); // فراغ = ناقص
+  });
+  it('APP_URL يجب أن يكون https (يُرسل للعملاء) أو عنوانًا صالحًا', () => {
+    expect(missingProdEnv({ ...good, APP_URL: 'http://fsm.example.com' }).join()).toContain('APP_URL');
+    expect(missingProdEnv({ ...good, APP_URL: 'not a url' }).join()).toContain('APP_URL');
   });
 });

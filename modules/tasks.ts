@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Actor } from '@/lib/auth';
 import { AppError, audit, conflict, db, notFound, type Tx } from '@/lib/core';
 import { assertCan, fieldAssignmentScope, orderScope } from '@/lib/permissions';
-import { readStored, saveImage } from '@/lib/storage';
+import { readStored, removeStored, saveImage } from '@/lib/storage';
 import { moveOrder } from './orders';
 import { ACTIVE_ASSIGNMENT, carpetWaste, completionMissing, isActiveAssignment, nextTripStep } from './rules';
 
@@ -103,15 +103,21 @@ export async function uploadFile(actor: Actor, taskId: string, form: FormData) {
   const pre = await getTask(actor, taskId);
   if (pre.status !== 'IN_PROGRESS') throw conflict('ابدأ المهمة أولًا');
   const stored = await saveImage(file);
-  return db.$transaction(async (tx) => {
-    const t = await lockedTask(tx, actor, taskId);
-    if (t.status !== 'IN_PROGRESS') throw conflict('ابدأ المهمة أولًا');
-    const f = await tx.taskFile.create({
-      data: { assignmentId: t.id, kind, storageKey: stored.key, mime: stored.mime, signerName, uploadedById: actor.id },
+  try {
+    return await db.$transaction(async (tx) => {
+      const t = await lockedTask(tx, actor, taskId);
+      if (t.status !== 'IN_PROGRESS') throw conflict('ابدأ المهمة أولًا');
+      const f = await tx.taskFile.create({
+        data: { assignmentId: t.id, kind, storageKey: stored.key, mime: stored.mime, signerName, uploadedById: actor.id },
+      });
+      await event(tx, t.id, actor.id, kind === 'SIGNATURE' ? 'SIGNATURE' : 'PHOTO');
+      return f;
     });
-    await event(tx, t.id, actor.id, kind === 'SIGNATURE' ? 'SIGNATURE' : 'PHOTO');
-    return f;
-  });
+  } catch (e) {
+    // الملف كُتب قبل المعاملة؛ إن فشلت (تغيّرت الحالة، انقطعت القاعدة) لا نترك ملفًا لا يشير إليه سجل
+    await removeStored(stored.key).catch((err: Error) => console.error(JSON.stringify({ level: 'error', job: 'orphan-cleanup', key: stored.key, message: err.message })));
+    throw e;
+  }
 }
 
 async function finish(tx: Tx, actor: Actor, t: Awaited<ReturnType<typeof lockedTask>>) {

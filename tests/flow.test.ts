@@ -1,5 +1,6 @@
 // اختبار تكامل على قاعدة حقيقية: من إنشاء الطلب في الفرع حتى الإتمام والتقييم والشكوى،
 // مع حالات 401/403/404/409/422 وعزل البيانات بين الفروع والفرق.
+import { readdirSync } from 'node:fs';
 import type { Role } from '@prisma/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { GET as listOrdersRoute, POST as createOrderRoute } from '@/app/api/v1/orders/route';
@@ -766,5 +767,49 @@ describe('نطاق الموظف الميداني: لا يرى ما لم يعد �
     await completeTask(actor, t.id);
     expect(await status(getOrder(actor, done.id))).toBe(200); // عمله المنجز يبقى له
     expect(await status(getTask(actor, t.id))).toBe(200);
+  });
+});
+
+describe('عميل موجود برقم هاتفه', () => {
+  it('طلب جديد من فرع آخر لا يستبدل اسم العميل، والاسم المُدخل يُحفظ في التدقيق', async () => {
+    const first = await createOrder(A.branchA, orderInput({ invoiceNumber: 'INV-NAME-1', customerName: 'علي الأصلي', customerPhone: '0771110001' }));
+    const second = await createOrder(A.branchB, orderInput({ invoiceNumber: 'INV-NAME-2', customerName: 'اسم مختلف', customerPhone: '+967 771110001' }));
+    const customer = await db.customer.findUniqueOrThrow({ where: { phone: '967771110001' } });
+    expect(customer.name).toBe('علي الأصلي'); // آخر كاتب لا يفوز بعد الآن
+    expect(second.customerId).toBe(first.customerId);
+    const log = await db.auditLog.findFirstOrThrow({ where: { entityType: 'order', entityId: second.id, action: 'create' } });
+    expect(log.data).toEqual({ customerNameEntered: 'اسم مختلف' });
+    const same = await createOrder(A.branchA, orderInput({ invoiceNumber: 'INV-NAME-3', customerName: 'علي الأصلي', customerPhone: '0771110001' }));
+    expect((await db.auditLog.findFirstOrThrow({ where: { entityType: 'order', entityId: same.id, action: 'create' } })).data).toBeNull(); // نفس الاسم: لا ضجيج
+  });
+});
+
+describe('رفع صورة تفشل معاملته', () => {
+  const stored = () => {
+    try {
+      return readdirSync('.test-storage', { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).length;
+    } catch {
+      return 0; // المجلد لم يُنشأ بعد
+    }
+  };
+
+  it('لا يبقى ملف يتيم على القرص إذا فشلت معاملة القاعدة بعد الكتابة، ويظهر الخطأ الأصلي', async () => {
+    const passwordHash = await hashPassword('test-password');
+    const u = await db.user.create({ data: { name: 'ميداني ٤', phone: '967799990104', role: 'INSTALLER', passwordHash } });
+    const actor = { id: u.id, name: u.name, role: 'INSTALLER', branchId: null } as Actor;
+    const team = await db.team.create({ data: { name: 'فريق ٤', type: 'FURNITURE', members: { create: { userId: u.id } } } });
+    const o = await createOrder(A.manager, orderInput({ branchId: branchA, invoiceNumber: 'INV-ORPHAN' }));
+    await approveOrder(A.manager, o.id);
+    const t = await assignOrder(A.manager, o.id, { teamId: team.id, ...slot(7, 8) });
+    await startTask(actor, t.id);
+
+    const before = stored();
+    const down = vi.spyOn(db, '$transaction').mockRejectedValueOnce(new Error('connection lost'));
+    await expect(uploadFile(actor, t.id, photo('BEFORE'))).rejects.toThrow('connection lost');
+    down.mockRestore();
+    expect(stored()).toBe(before); // كان يزيد بملف لا يشير إليه أي سجل
+
+    await uploadFile(actor, t.id, photo('BEFORE')); // والرفع السليم بعدها يعمل ويبقى ملفه
+    expect(stored()).toBe(before + 1);
   });
 });
